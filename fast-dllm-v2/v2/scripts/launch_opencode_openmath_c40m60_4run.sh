@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Submit the three reported OpenCode/OpenMath c40m60 runs concurrently.
-# These reproduce the rows of Table 2 (paper) for the c40m60 mixture:
+# Submit the four reported OpenCode/OpenMath c40m60 runs concurrently.
+# These reproduce the adapted rows of Table 2 (paper) for the c40m60 mixture:
 #   - vanilla   : Vanilla SFT (loss_type=mlm, no relay)
+#   - rollout   : Rollout     (loss_type=bptt, use_relay=False; on-policy rollout, relay channel disabled)
 #   - relay_sg  : RELAY (sg)  (loss_type=bptt, use_relay=True, stop_grad_h_s=1)
 #   - relay     : RELAY       (loss_type=bptt, use_relay=True, stop_grad_h_s=0)
 #
@@ -55,6 +56,11 @@ job_ids[vanilla]=$(submit vanilla \
     --export="${common_export}" \
     train_scripts/finetune_opencode_openmath.sbatch)
 
+job_ids[rollout]=$(submit rollout \
+    --job-name=ft_c40m60_rollout_1p5B \
+    --export="${common_export},USE_RELAY=0,BPTT_STOP_GRAD_H_S=0" \
+    train_scripts/finetune_opencode_openmath_bptt.sbatch)
+
 job_ids[relay_sg]=$(submit relay_sg \
     --job-name=ft_c40m60_relay_sg_1p5B \
     --export="${common_export},USE_RELAY=1,BPTT_STOP_GRAD_H_S=1" \
@@ -70,7 +76,7 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
 fi
 
 printf "Submitted jobs:\n"
-for key in vanilla relay_sg relay; do
+for key in vanilla rollout relay_sg relay; do
     printf "  %-20s %s\n" "${key}" "${job_ids[$key]}"
 done
 

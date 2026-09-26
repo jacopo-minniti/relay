@@ -4,9 +4,9 @@ This directory is a fork of the upstream
 [Fast-dLLM v2](https://github.com/NVlabs/Fast-dLLM) `v2/` codebase (Wu et al.,
 [arXiv:2509.26328](https://arxiv.org/abs/2509.26328)) that adds the **RELAY**
 extension introduced in *Learned Relay Representations for Forward-Thinking
-Discrete Diffusion Models*. Use it to reproduce the **Vanilla SFT**, **RELAY
-(sg)**, and **RELAY** rows of Table 2 (paper, Section 4.2) on
-HumanEval / HumanEval+ and MBPP / MBPP+.
+Discrete Diffusion Models*. Use it to reproduce the **Vanilla SFT**,
+**Rollout**, **RELAY (sg)**, and **RELAY** rows of Table 2 (paper,
+Section 4.2) on HumanEval / HumanEval+ and MBPP / MBPP+.
 
 > **Canonical setup, training, and evaluation commands** live in the
 > top-level [relay README](../../README.md). This file documents only what is
