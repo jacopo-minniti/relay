@@ -1,6 +1,6 @@
 # RELAY: Learned Relay Representations for Forward-Thinking Discrete Diffusion Models
 
-Code release for the paper *Learned Relay Representations for Forward-Thinking Discrete Diffusion Models* (NeurIPS 2026 submission). When Masked Diffusion Models (MDMs) generate sequences through iterative refinement, the rich internal computation accumulated over masked positions is discarded at the end of each forward pass — forcing every subsequent denoising step to start from scratch. We call this the **hard reset** problem. To address it, we propose **RELAY**: at each denoising step the model carries its last-layer hidden states forward as a learned relay, giving the next forward pass direct access to prior continuous computation. The relay is trained end-to-end via truncated backpropagation through time (BPTT), shaping it to be maximally informative for the next several denoising steps. RELAY is architecture-agnostic, leaves the inference-time decoding procedure of MDMs unchanged, and is compatible with block diffusion and KV caching.
+Code release for the paper *Learned Relay Representations for Forward-Thinking Discrete Diffusion Models* (ICLR 2027 submission). When Masked Diffusion Models (MDMs) generate sequences through iterative refinement, the rich internal computation accumulated over masked positions is discarded at the end of each forward pass — forcing every subsequent denoising step to start from scratch. We call this the **hard reset** problem. To address it, we propose **RELAY**: at each denoising step the model carries its last-layer hidden states forward as a learned relay, giving the next forward pass direct access to prior continuous computation. The relay is trained end-to-end via truncated backpropagation through time (BPTT), shaping it to be maximally informative for the next several denoising steps. RELAY is architecture-agnostic, leaves the inference-time decoding procedure of MDMs unchanged, and is compatible with block diffusion and KV caching.
 
 We validate the design choices on a Sudoku-based planning task, then scale RELAY to **Fast-dLLM v2 1.5B** (a state-of-the-art block-diffusion language model) — outperforming standard supervised fine-tuning on coding tasks while decreasing inference latency by up to 32%.
 
@@ -43,7 +43,7 @@ Each row is one training objective × one weight-tying condition. The four objec
 Each of the four objectives is run in two weight-tying conditions (`tied` and `untied`), giving the eight rows of Table 1; the paper averages over three training seeds.
 
 ```bash
-git clone --recurse-submodules https://github.com/jacopo-minniti/relay.git
+git clone --recurse-submodules <repo-url>
 cd relay/sudoku
 # if you already cloned without submodules:
 #   git submodule update --init --recursive
@@ -212,11 +212,11 @@ For the camera-ready, request a fresh anonymous slug if the snapshot has acciden
 ## Citation
 
 ```bibtex
-@inproceedings{relay2026,
+@inproceedings{relay2027,
   title  = {Learned Relay Representations for Forward-Thinking Discrete Diffusion Models},
   author = {Anonymous},
-  booktitle = {Submitted to NeurIPS 2026},
-  year   = {2026}
+  booktitle = {Submitted to ICLR 2027},
+  year   = {2027}
 }
 ```
 

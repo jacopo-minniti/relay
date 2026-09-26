@@ -8,7 +8,7 @@ Relay-sg.
 ## Setup
 
 ```bash
-git clone --recurse-submodules https://github.com/jacopo-minniti/relay.git
+git clone --recurse-submodules <repo-url>
 cd relay/sudoku
 ```
 
