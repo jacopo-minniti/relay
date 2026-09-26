@@ -78,12 +78,13 @@ The first train downloads [`brozonoyer/sapientinc-sudoku-extreme-timvink-sudoku-
 
 ### Table 2 — Fast-dLLM v2 1.5B (`fast-dllm-v2/`)
 
-Each row is a 200-step adaptation of the off-the-shelf [`Efficient-Large-Model/Fast_dLLM_v2_1.5B`](https://huggingface.co/Efficient-Large-Model/Fast_dLLM_v2_1.5B) on the OpenCodeInstruct + OpenMathInstruct-2 c40m60 mixture (24 000 code rows + 36 000 math rows = 60 000 rows; effective batch size 32; learning rate 5e-6). EvalPlus pass@1 is reported at `threshold=0.85`, BD block 32, sub-block 8, exactly as in Wu et al. (2025b).
+Each row is a 200-step adaptation of the off-the-shelf [`Efficient-Large-Model/Fast_dLLM_v2_1.5B`](https://huggingface.co/Efficient-Large-Model/Fast_dLLM_v2_1.5B) on the OpenCodeInstruct + OpenMathInstruct-2 c40m60 mixture (24 000 code rows + 36 000 math rows = 60 000 rows; effective batch size 64; learning rate 5e-6). EvalPlus pass@1 is reported at `threshold=0.85`, BD block 32, sub-block 8, exactly as in Wu et al. (2025b).
 
 | Row | What it is | Launch flags |
 |---|---|---|
 | **Fast-dLLM-v2 (1.5B)** | Off-the-shelf base model | (no training) |
 | **Vanilla SFT** | `--loss_type mlm` (no relay) | `train_scripts/finetune_opencode_openmath.sbatch` |
+| **Rollout** | `--loss_type bptt --bptt_use_relay 0` (on-policy 2-step rollout, relay channel disabled) | `USE_RELAY=0 sbatch train_scripts/finetune_opencode_openmath_bptt.sbatch` |
 | **RELAY (sg)** | `--loss_type bptt --bptt_use_relay 1 --bptt_stop_grad_h_s 1` | `USE_RELAY=1 BPTT_STOP_GRAD_H_S=1 sbatch train_scripts/finetune_opencode_openmath_bptt.sbatch` |
 | **RELAY** | `--loss_type bptt --bptt_use_relay 1 --bptt_stop_grad_h_s 0` | `USE_RELAY=1 BPTT_STOP_GRAD_H_S=0 sbatch train_scripts/finetune_opencode_openmath_bptt.sbatch` |
 
@@ -107,7 +108,7 @@ python scripts/prep_opencode_openmath_mix.py \
 DRY_RUN=1 BLOCK_SIZE=512 NUM_TRAIN_EPOCHS=1 SAVE_STEPS=5 \
   bash scripts/launch_opencode_openmath_c40m60_4run.sh
 
-# 4. Reproduce Table 2 on a SLURM cluster (3 jobs, 2x A100-80GB each).
+# 4. Reproduce Table 2 on a SLURM cluster (4 jobs, 2x A100-80GB each).
 bash scripts/launch_opencode_openmath_c40m60_4run.sh
 
 # 5. Evaluate any saved checkpoint with EvalPlus (HumanEval+ / MBPP+).
