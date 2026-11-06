@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relay-tinygsm"
+version = "0.1.0"
+description = "Learned Relay Representations for diffusion MLM (TinyGSM experiments)"
+requires-python = ">=3.11"
+dependencies = [
+    "xlm-core",
+    "torch",
+    "jaxtyping",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["relay_tinygsm*"]
+
+[tool.setuptools.package-data]
+relay_tinygsm = ["configs/**/*.yaml", "debug_data/**/*.csv"]

@@ -1,0 +1,49 @@
+# @package _global_
+defaults:
+  - /metrics@reported_metrics.train.lm.accumulated_loss: accumulated_loss
+  - /metrics@reported_metrics.val.lm.accumulated_loss: accumulated_loss
+  - /metrics@reported_metrics.test.lm.accumulated_loss: accumulated_loss
+
+lightning_module:
+  _target_: xlm.harness.Harness
+
+loss:
+  _target_: relay_tinygsm.loss.RelayBPTTSeq2SeqLoss
+  use_model_confidence: true
+  loss_on_visible_tokens: false
+  batch_shape_key: input_ids
+  num_steps: 2
+  with_relay: true
+  stop_grad_h_s: false
+
+predictor:
+  _target_: relay_tinygsm.predictor.RelayConfidencePredictor
+  tokenizer: ${global_components:tokenizer}
+  max_steps: ${block_size}
+  max_new_tokens: ${block_size}
+  top_k: 1
+  top_p: null
+  confidence: top_prob
+  threshold: 0.15
+  with_relay: true
+
+diagnostic_metrics: null
+reported_metrics:
+  train:
+    lm:
+      accumulated_loss:
+        prefix: train/lm
+        update_fn: relay_tinygsm.metrics.mean_metric_update_fn
+  val:
+    lm:
+      accumulated_loss:
+        prefix: val/lm
+        update_fn: relay_tinygsm.metrics.mean_metric_update_fn
+  test:
+    lm:
+      accumulated_loss:
+        prefix: test/lm
+        update_fn: relay_tinygsm.metrics.mean_metric_update_fn
+
+tags:
+  model_type: relay_bptt

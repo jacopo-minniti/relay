@@ -1,0 +1,37 @@
+defaults:
+  - default_text
+
+_target_: xlm.datamodule.LocalDatasetManager
+ds_type: csv
+# data_files bypasses the hub-style full_name parser (repo/dataset/split only).
+# full_name stays a 3-segment label; the CSV is the committed debug row.
+load_kwargs:
+  data_files: ${oc.env:PROJECT_ROOT,.}/relay_tinygsm/debug_data/tinygsm_one/train.csv
+use_manual_cache: false
+collator: ???
+full_name: local/tinygsm_one/train
+full_name_debug: local/tinygsm_one/train
+preprocess_function: xlm.tasks.tinygsm.tinygsm_preprocess_fn
+preprocess_function_kwargs:
+  sep: "\n"
+on_the_fly_processor: xlm.datamodule.token_ids_to_input_ids_and_prompt_ids
+on_the_fly_group_processor: null
+columns_to_remove:
+  - question
+  - code
+stages:
+  - fit
+  - validate
+iterable_dataset_shards: null
+shuffle_buffer_size: null
+shuffle_seed: 42
+split_by_node: true
+dataloader_kwargs:
+  batch_size: ${per_device_batch_size}
+  num_workers: ${num_dataloader_workers}
+  shuffle: null
+  pin_memory: true
+  persistent_workers: false
+  prefetch_factor: ${dataloader_prefetch_factor}
+  drop_last: false
+model_name: null

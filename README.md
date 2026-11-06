@@ -13,15 +13,19 @@ We validate the design choices on a Sudoku-based planning task, then scale RELAY
 ```
 relay/
 ├── sudoku/         design study on Sudoku-Extreme  (Table 1 of the paper)
-└── fast-dllm-v2/   adaptation of Fast-dLLM v2 1.5B (Table 2 of the paper)
+├── fast-dllm-v2/   adaptation of Fast-dLLM v2 1.5B (Table 2 of the paper)
+└── tinygsm/        rollout / RELAY (sg) / RELAY ladder on TinyGSM
 ```
 
-The two subdirectories are intentionally independent: each ships its own Python environment, dataset preparation pipeline, training launcher, and evaluation pipeline. Pick the subdirectory that matches the experiments you want to reproduce.
+The subdirectories are intentionally independent: each ships its own Python environment, dataset preparation pipeline, training launcher, and evaluation pipeline. Pick the subdirectory that matches the experiments you want to reproduce.
 
 | Sub-project | Paper section | Environment |
 |---|---|---|
 | [`sudoku/`](sudoku) | §4.1 (Table 1, Figure 2) | `.venv_relay` venv (`python -m venv`, Python 3.11.10) |
 | [`fast-dllm-v2/`](fast-dllm-v2) | §4.2 (Table 2, Figure 3) | `relay` conda env (Python 3.10) |
+| [`tinygsm/`](tinygsm) | additional TinyGSM ladder (not a paper table) | `.venv_relay` venv (`python -m venv`, Python 3.11) |
+
+Commands for the TinyGSM ladder are in [`tinygsm/TINYGSM_COMMANDS.md`](tinygsm/TINYGSM_COMMANDS.md).
 
 > Both sub-projects log to Weights & Biases by default. Set `WANDB_ENTITY` to your own entity in each sub-project's `.env` (or pass `loggers.wandb=null` to the Sudoku launcher) to log to your account or disable logging.
 

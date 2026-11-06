@@ -2,3 +2,7 @@
 	path = sudoku/xlm-core
 	url = https://github.com/dhruvdcoder/xlm-core.git
 	branch = main
+[submodule "tinygsm/xlm-core"]
+	path = tinygsm/xlm-core
+	url = https://github.com/dhruvdcoder/xlm-core.git
+	branch = main

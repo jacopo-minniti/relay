@@ -1,0 +1,6 @@
+_target_: xlm.metrics.MetricWrapper
+name: rollout_steps
+metric:
+  _target_: torchmetrics.MeanMetric
+prefix: ???
+update_fn: relay_tinygsm.metrics.rollout_steps_update_fn

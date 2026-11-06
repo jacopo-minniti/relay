@@ -1,0 +1,15 @@
+"question","code"
+"Mark has 10 crayons. He gives 2 crayons to his younger sister and loses another 4 while he was playing. How many crayons does Mark have left?","def simple_math_problem() -> int:
+    """"""
+    Mark has 10 crayons.
+    He gives 2 crayons to his younger sister and loses another 4 while he was playing.
+    How many crayons does Mark have left?
+    """"""
+    crayonsTotal = 10
+    crayonsGiven = 2
+    crayonsLost = 4
+    crayonsLeft = crayonsTotal - crayonsGiven - crayonsLost
+    result = crayonsLeft
+
+    return result
+"

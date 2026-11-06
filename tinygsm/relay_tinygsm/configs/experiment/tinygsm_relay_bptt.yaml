@@ -1,0 +1,106 @@
+# @package _global_
+defaults:
+  - /metrics@reported_metrics.val.prediction.rollout_steps: rollout_steps
+  - /metrics@reported_metrics.test.gsm8k_prediction.rollout_steps: rollout_steps
+  - override /datamodule: tinygsm_relay
+  - override /noise_schedule: dummy
+  - override /model_type: relay_bptt
+  - override /model: rotary_transformer_relay_mlm
+
+add_bos: false
+add_eos: true
+per_device_batch_size: 32
+global_batch_size: 512
+num_dataloader_workers: 5
+block_size: 256
+input_block_size: 256
+monitored_metric: val/lm/accumulated_loss
+
+global_components:
+  tokenizer:
+    _target_: xlm.datamodule.load_auto_tokenizer
+    pretrained_model_name_or_path: Qwen/Qwen2-0.5B
+    special_tokens:
+      mask_token: "<|mask|>"
+      pad_token: "<|pad|>"
+
+datamodule:
+  print_batch_fn: mlm.datamodule_mlm.print_batch_mlm
+
+loss:
+  _target_: relay_tinygsm.loss.RelayBPTTSeq2SeqLoss
+  use_model_confidence: true
+  loss_on_visible_tokens: false
+  batch_shape_key: input_ids
+  num_steps: 2
+  with_relay: true
+  stop_grad_h_s: false
+  threshold_sampling_sigma: 0.1
+
+predictor:
+  _target_: relay_tinygsm.predictor.RelayConfidencePredictor
+  tokenizer: ${global_components:tokenizer}
+  max_steps: ${block_size}
+  max_new_tokens: ${block_size}
+  top_k: 1
+  top_p: null
+  confidence: top_prob
+  threshold: 0.15
+  with_relay: true
+  log_rollout_diagnostics: false
+
+log_predictions:
+  _target_: xlm.log_predictions.LogPredictions
+  fields_to_keep_in_output:
+    - text
+    - generated_text
+    - answer
+    - inference_steps
+  additional_fields_from_batch:
+    - answer
+  writers:
+    - file
+    - logger
+
+post_hoc_evaluator:
+  _target_: xlm.tasks.composite_eval.CompositePostHocEvaluator
+  evaluators:
+    prediction:
+      _target_: xlm.tasks.tinygsm.Gsm8kCodeEval
+
+trainer:
+  max_steps: 1000_000
+  val_check_interval: 50000
+  check_val_every_n_epoch: null
+  num_sanity_val_steps: 1
+  limit_val_batches: 8
+
+optimizer:
+  lr: 0.0001
+
+lr_scheduler:
+  name: constant_with_warmup
+  num_warmup_steps: 2000
+  num_training_steps: ${trainer.max_steps}
+  monitor: train/loss
+
+callbacks:
+  checkpoint_every_n_steps:
+    every_n_train_steps: 2500
+    keep_multiple: 40
+
+reported_metrics:
+  val:
+    prediction:
+      rollout_steps:
+        prefix: val/prediction
+        update_fn: relay_tinygsm.metrics.rollout_steps_update_fn
+  test:
+    gsm8k_prediction:
+      rollout_steps:
+        prefix: test/gsm8k_prediction
+        update_fn: relay_tinygsm.metrics.rollout_steps_update_fn
+
+loggers:
+  wandb:
+    project: BPTT-tinygsm
