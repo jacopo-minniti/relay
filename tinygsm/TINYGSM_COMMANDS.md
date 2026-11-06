@@ -68,4 +68,12 @@ Job ids are appended below after submission.
 
 ### Submitted jobs
 
-(pending)
+All three finished `COMPLETED` on 2026-11-06. Logs are under
+`tinygsm/logs/` in `/scratch3/workspace/dhruveshpate_umass_edu-relay/relay-tinygsm`.
+Final test metrics are `code_exec_accuracy=1.0` with rollout steps well under 256.
+
+| Rung | Job | Partition | GPU | Log | Final loss | NFE |
+|---|---|---|---|---|---|---|
+| relay | 66850546 | superpod-a100 | A100-SXM4-80GB (`gpu020`) | `logs/tinygsm_relay_overfit_debug-66850546.out` | 0.028 | 8 |
+| relay_sg | 66850856 | gpu-preempt-highvram | H100 80GB (`uri-gpu012`) | `logs/tinygsm_relay_overfit_debug-66850856.out` | 0.054 | 7 |
+| rollout | 66850857 | superpod-a100 | A100-SXM4-80GB | `logs/tinygsm_relay_overfit_debug-66850857.out` | 0.021 | 5 |
