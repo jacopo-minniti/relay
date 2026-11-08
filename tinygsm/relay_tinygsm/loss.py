@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -39,6 +39,9 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
         stop_grad_h_s: bool = False,
         with_relay: bool = True,
         threshold_sampling_sigma: float = 0.0,
+        log_step_diagnostics: bool = False,
+        log_grad_diagnostics: bool = False,
+        grad_diagnostics_every_n_steps: int = 50,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -50,8 +53,18 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
         self.stop_grad_h_s = stop_grad_h_s
         self.with_relay = with_relay
         self.threshold_sampling_sigma = threshold_sampling_sigma
+        self.log_step_diagnostics = log_step_diagnostics
+        self.log_grad_diagnostics = log_grad_diagnostics
+        self.grad_diagnostics_every_n_steps = grad_diagnostics_every_n_steps
         self.pl_module = None
         self.mask_token_id_tensor = None
+        self._grad_diag: Optional[Dict[str, Any]] = None
+        self._grad_diag_skip_warned = False
+        if self.grad_diagnostics_every_n_steps < 1:
+            raise ValueError(
+                "grad_diagnostics_every_n_steps must be >= 1, "
+                f"got {self.grad_diagnostics_every_n_steps}."
+            )
         if self.threshold_sampling_sigma < 0:
             raise ValueError(
                 "threshold_sampling_sigma must be >= 0, "
@@ -89,7 +102,8 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
         x_clean: torch.Tensor,
         x_input: torch.Tensor,
         fixed: torch.Tensor,
-    ) -> torch.Tensor:
+        return_per_token: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         targets = x_clean.clone()
         ignore = torch.zeros_like(x_input, dtype=torch.bool)
         if not self.loss_on_visible_tokens:
@@ -107,7 +121,10 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
             reduction="none",
             ignore_index=-100,
         )
-        return masked_mean(ce.flatten(), ~ignore.flatten(), dim=-1)
+        loss = masked_mean(ce.flatten(), ~ignore.flatten(), dim=-1)
+        if return_per_token:
+            return loss, ce.detach(), ignore
+        return loss
 
     def _select_unmask(
         self,
@@ -149,6 +166,168 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
             (), device=device
         ).item()
         return max(0.0, sampled)
+
+    def _wants_grad_diag(self, batch_idx: Optional[int], is_training: bool) -> bool:
+        if not (
+            self.log_grad_diagnostics
+            and is_training
+            and self.pl_module is not None
+            and self.num_steps == 2
+            and batch_idx is not None
+        ):
+            return False
+        trainer = getattr(self.pl_module, "trainer", None)
+        if trainer is None:
+            return False
+        accum = int(trainer.accumulate_grad_batches)
+        world = int(getattr(trainer, "world_size", 1) or 1)
+        if accum == 1 and world > 1:
+            if not self._grad_diag_skip_warned:
+                logger.warning(
+                    "Skipping grad diagnostics: accumulate_grad_batches=1 "
+                    "under DDP would run the split backward on the sync microbatch."
+                )
+                self._grad_diag_skip_warned = True
+            return False
+        if int(trainer.global_step) % self.grad_diagnostics_every_n_steps != 0:
+            return False
+        return int(batch_idx) % accum == 0
+
+    def _collect_step_diag(
+        self,
+        *,
+        t: int,
+        logits: torch.Tensor,
+        ce_tok: torch.Tensor,
+        ignore: torch.Tensor,
+        x_clean: torch.Tensor,
+        x_input: torch.Tensor,
+        unmask: torch.Tensor,
+        h_read: Optional[torch.Tensor],
+        h_written: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        with torch.no_grad():
+            valid = ~ignore
+            m = valid.sum().to(dtype=torch.float32)
+            u = (unmask & valid).sum().to(dtype=torch.float32) / m.clamp_min(1.0)
+            tgt = x_clean.clamp(min=0).unsqueeze(-1)
+            lt = logits.gather(-1, tgt).squeeze(-1)
+            mx, am = logits.max(dim=-1)
+            conf = torch.exp(mx.float() - ce_tok.float() - lt.float())
+            acc = (am == x_clean).to(dtype=torch.float32)
+            flat_valid = valid.flatten()
+            c_bar = masked_mean(conf.flatten(), flat_valid, dim=-1)
+            a = masked_mean(acc.flatten(), flat_valid, dim=-1)
+            l_scalar = masked_mean(ce_tok.flatten().float(), flat_valid, dim=-1)
+            record: Dict[str, torch.Tensor] = {
+                "t": torch.tensor(t),
+                "ce": ce_tok.detach(),
+                "valid": valid,
+                "L_scalar": l_scalar,
+                "m": m,
+                "u": u,
+                "c_bar": c_bar,
+                "a": a,
+            }
+            if h_read is not None and h_written is not None:
+                record.update(self._carry_stats(t, h_read, h_written, x_input))
+            return record
+
+    def _carry_stats(
+        self,
+        t: int,
+        h_read: torch.Tensor,
+        h_written: torch.Tensor,
+        x_input: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        del t
+        ht = h_read.detach().float()
+        hs = h_written.detach().float()
+        row = ht.pow(2).sum(dim=(-1, -2)) > 0
+        rms_in = self._rms_on_rows(ht, row)
+        rms_out = self._rms_on_rows(hs, row)
+        num = (ht * hs).sum(dim=-1)
+        den = ht.norm(dim=-1).clamp_min(1e-12) * hs.norm(dim=-1).clamp_min(1e-12)
+        cos = num / den
+        pos = row.unsqueeze(-1) & (ht.norm(dim=-1) > 0)
+        cos_mean = masked_mean(cos.flatten(), pos.flatten(), dim=-1)
+        out: Dict[str, torch.Tensor] = {
+            "rms_h": rms_in,
+            "rms_h_next": rms_out,
+            "cos_h": cos_mean,
+        }
+        if self.with_relay and hasattr(self.model, "relay_layer_norm"):
+            ln_h = self.model.relay_layer_norm(h_read.detach()).float()
+            emb = self.model.embed_tokens(x_input).detach().float()
+            out["rho"] = self._rms(ln_h) / self._rms(emb).clamp_min(1e-12)
+        return out
+
+    @staticmethod
+    def _rms(v: torch.Tensor) -> torch.Tensor:
+        return torch.sqrt(v.float().pow(2).mean())
+
+    @staticmethod
+    def _rms_on_rows(v: torch.Tensor, row: torch.Tensor) -> torch.Tensor:
+        if int(row.sum()) == 0:
+            return v.new_zeros(())
+        keep = row.view(-1, *([1] * (v.ndim - 1))).to(dtype=v.dtype)
+        total = (v.pow(2) * keep).sum()
+        count = row.sum().to(dtype=v.dtype) * v.shape[-1] * v.shape[-2]
+        return torch.sqrt(total / count.clamp_min(1.0))
+
+    @torch.compiler.disable
+    def _log_step_diag(
+        self,
+        records: List[Dict[str, torch.Tensor]],
+        *,
+        h0: Optional[torch.Tensor],
+        evicted_count: int,
+        capacity: int,
+    ) -> None:
+        assert self.pl_module is not None
+        log_kw = dict(
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            sync_dist=False,
+            rank_zero_only=True,
+            logger=True,
+            add_dataloader_idx=False,
+        )
+        for rec in records:
+            t = int(rec["t"])
+            self.pl_module.log(f"train/diag/L{t}", rec["L_scalar"], **log_kw)
+            self.pl_module.log(f"train/diag/m{t}", rec["m"], **log_kw)
+            self.pl_module.log(f"train/diag/u{t}", rec["u"], **log_kw)
+            self.pl_module.log(f"train/diag/c_bar{t}", rec["c_bar"], **log_kw)
+            self.pl_module.log(f"train/diag/a{t}", rec["a"], **log_kw)
+            self.pl_module.log(
+                f"train/diag/c_bar_minus_a{t}",
+                rec["c_bar"] - rec["a"],
+                **log_kw,
+            )
+            if "rms_h" in rec:
+                self.pl_module.log(f"train/diag/rms_h{t}", rec["rms_h"], **log_kw)
+                self.pl_module.log(
+                    f"train/diag/rms_h{t + 1}", rec["rms_h_next"], **log_kw
+                )
+                self.pl_module.log(f"train/diag/cos_h{t}", rec["cos_h"], **log_kw)
+            if "rho" in rec:
+                self.pl_module.log(f"train/diag/rho{t}", rec["rho"], **log_kw)
+        if h0 is not None and records:
+            valid0 = records[0]["valid"]
+            ce0 = records[0]["ce"]
+            carried = h0.detach().float().pow(2).sum(dim=(-1, -2)) > 0
+            row_valid = valid0 & carried.unsqueeze(-1)
+            l0c = masked_mean(ce0.flatten().float(), row_valid.flatten(), dim=-1)
+            zeta = (h0.detach().abs().sum(dim=-1) == 0).float().mean()
+            self.pl_module.log("train/diag/L0_carried", l0c, **log_kw)
+            self.pl_module.log("train/diag/zeta", zeta, **log_kw)
+        eps = torch.tensor(
+            float(evicted_count) / float(max(capacity, 1)),
+            device=records[0]["m"].device if records else None,
+        )
+        self.pl_module.log("train/diag/epsilon", eps, **log_kw)
 
     def loss_fn(
         self,
@@ -206,23 +385,54 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
             sb.storage["h_s"].clone() if self.with_relay else None
         )
 
+        step_diag = bool(
+            self.log_step_diagnostics and is_training and self.pl_module is not None
+        )
+        grad_diag = self._wants_grad_diag(batch_idx, is_training)
+        if grad_diag and not getattr(self.pl_module, "consumes_grad_diag", False):
+            raise RuntimeError(
+                "loss.log_grad_diagnostics=true requires "
+                "lightning_module._target_=relay_tinygsm.harness.RelayDiagnosticsHarness"
+            )
+        h0_diag = h.detach() if (step_diag and h is not None) else None
+        diag_records: List[Dict[str, torch.Tensor]] = []
+
         loss_terms: List[torch.Tensor] = []
         last_unmask: Optional[torch.Tensor] = None
+        attached_h1: Optional[torch.Tensor] = None
+        leaf: Optional[torch.Tensor] = None
 
-        for _t in range(self.num_steps):
+        for t in range(self.num_steps):
             masked_mutable = (x == self.tokenizer.mask_token_id) & ~fixed
             has_any_mask = masked_mutable.any()
 
-            if self.with_relay:
+            h_for_model = h
+            if grad_diag and t == 1 and self.with_relay:
                 assert h is not None
+                attached_h1 = h
+                leaf = h.detach().requires_grad_(True)
+                h_for_model = leaf
+
+            if self.with_relay:
+                assert h_for_model is not None
                 logits, h_s = self.model(
-                    x, h, attention_mask=attention_mask, positions=positions
+                    x,
+                    h_for_model,
+                    attention_mask=attention_mask,
+                    positions=positions,
                 )
             else:
                 logits = self.model(x, attention_mask, positions)
                 h_s = None
 
-            L_t = self._compute_ce(logits, x_clean, x, fixed)
+            if step_diag:
+                L_t, ce_tok, ignore = self._compute_ce(
+                    logits, x_clean, x, fixed, return_per_token=True
+                )
+            else:
+                L_t = self._compute_ce(logits, x_clean, x, fixed)
+                ce_tok = None
+                ignore = None
             anchor = 0.0 * logits.sum()
             L_t = L_t + anchor
             loss_terms.append(L_t)
@@ -245,6 +455,21 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
             )
             unmask = unmask & masked_mutable
             last_unmask = unmask
+            if step_diag:
+                assert ce_tok is not None and ignore is not None
+                diag_records.append(
+                    self._collect_step_diag(
+                        t=t,
+                        logits=logits,
+                        ce_tok=ce_tok,
+                        ignore=ignore,
+                        x_clean=x_clean,
+                        x_input=x,
+                        unmask=unmask,
+                        h_read=h,
+                        h_written=h_s,
+                    )
+                )
 
             x = x.clone()
             with torch.no_grad():
@@ -265,5 +490,29 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
                 assert h is not None
                 sb.storage["h_s"] = h.detach().clone()
         sb.update_after_unmask(last_unmask, x_clean, self.mask_token_id_tensor)
+
+        if step_diag:
+            self._log_step_diag(
+                diag_records,
+                h0=h0_diag,
+                evicted_count=evicted_count,
+                capacity=capacity,
+            )
+        if grad_diag:
+            through_h = bool(
+                self.with_relay
+                and not self.stop_grad_h_s
+                and attached_h1 is not None
+                and attached_h1.requires_grad
+            )
+            self._grad_diag = {
+                "L0": loss_terms[0],
+                "L1": loss_terms[1],
+                "h1": attached_h1,
+                "leaf": leaf,
+                "through_h": through_h,
+            }
+        else:
+            self._grad_diag = None
 
         return {"loss": total_loss}
