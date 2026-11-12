@@ -28,6 +28,39 @@ from xlm.utils.rank_zero import RankedLogger
 logger = RankedLogger(__name__, rank_zero_only=True)
 
 StepResults = Dict[str, Any]
+_BLOCK_SENTINEL = 1_000_000
+
+
+def contiguous_block_allow(
+    masked_mutable: Bool[TT, " batch seq_len"],
+    fixed: Bool[TT, " batch seq_len"],
+    block_size: int,
+) -> Bool[TT, " batch seq_len"]:
+    """Earliest incomplete suffix block, one per row.
+
+    The suffix starts at the first index where ``fixed`` is false, so a
+    right-padded training batch and a left-padded decode batch share this rule.
+    The returned mask covers every position in that block, including positions
+    that are already unmasked. Later blocks stay out until this one has no masks.
+    """
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}")
+    suffix = ~fixed
+    seq_len = fixed.shape[-1]
+    idx = torch.arange(seq_len, device=fixed.device)
+    first = torch.where(suffix, idx, seq_len).amin(dim=-1)
+    rel = (idx.unsqueeze(0) - first.unsqueeze(-1)).clamp(min=0)
+    block_id = rel // int(block_size)
+    masked_suffix = masked_mutable & suffix
+    ids = torch.where(
+        masked_suffix,
+        block_id,
+        torch.full_like(block_id, _BLOCK_SENTINEL),
+    )
+    active = ids.amin(dim=-1)
+    live = active < _BLOCK_SENTINEL
+    in_window = block_id == active.unsqueeze(-1)
+    return suffix & in_window & live.unsqueeze(-1)
 
 
 class RelayConfidencePredictor(torch.nn.Module, Predictor):
@@ -46,9 +79,14 @@ class RelayConfidencePredictor(torch.nn.Module, Predictor):
         with_relay: bool = False,
         log_rollout_diagnostics: bool = False,
         log_rollout_diagnostics_max_steps: int = 8,
+        allow_block_size: Optional[int] = None,
     ):
         if tokenizer is None:
             raise ValueError("tokenizer is required")
+        if allow_block_size is not None and int(allow_block_size) <= 0:
+            raise ValueError(
+                f"allow_block_size must be positive, got {allow_block_size}"
+            )
         super().__init__()
         self.model = model
         self.tokenizer = tokenizer
@@ -69,6 +107,9 @@ class RelayConfidencePredictor(torch.nn.Module, Predictor):
         self.skip_special_tokens = skip_special_tokens
         self.log_rollout_diagnostics = log_rollout_diagnostics
         self.log_rollout_diagnostics_max_steps = log_rollout_diagnostics_max_steps
+        self.allow_block_size = (
+            None if allow_block_size is None else int(allow_block_size)
+        )
 
     def reset(self) -> None:
         return None
@@ -94,9 +135,23 @@ class RelayConfidencePredictor(torch.nn.Module, Predictor):
         masked_mutable: Bool[TT, " batch seq_len"],
         threshold: Optional[Union[float, torch.Tensor]] = None,
         done: Optional[Bool[TT, " batch"]] = None,
+        fixed: Optional[Bool[TT, " batch seq_len"]] = None,
     ) -> Bool[TT, " batch seq_len"]:
-        """Cumsum-threshold unmask (Sudoku rule). Higher confidence unmasks first."""
+        """Cumsum-threshold unmask (Sudoku rule). Higher confidence unmasks first.
+
+        When ``allow_block_size`` is set, only the earliest incomplete suffix
+        block competes. ``fixed`` supplies each row's suffix start.
+        """
         with torch.no_grad():
+            if self.allow_block_size is not None:
+                if fixed is None:
+                    raise ValueError(
+                        "allow_block_size requires fixed so the suffix start "
+                        "is known."
+                    )
+                masked_mutable = masked_mutable & contiguous_block_allow(
+                    masked_mutable, fixed, self.allow_block_size
+                )
             confidence = self.compute_confidence(logits).clone()
             confidence[~masked_mutable] = float("-inf")
             top_confidence_values, top_confidence_indices = torch.sort(
@@ -190,21 +245,29 @@ class RelayConfidencePredictor(torch.nn.Module, Predictor):
             h_new = None
 
         if not final_step:
+            eligible = masked_mutable
+            if self.allow_block_size is not None:
+                eligible = masked_mutable & contiguous_block_allow(
+                    masked_mutable, fixed, self.allow_block_size
+                )
             if not self.confidence:
                 steps_left = self.max_steps - step_results["steps_taken"]
                 num_unmask = (
-                    masked_mutable.sum(dim=-1) / steps_left.clamp(min=1)
+                    eligible.sum(dim=-1) / steps_left.clamp(min=1)
                 ).long()
                 unmask = select_random_indices(
                     inp_shape=x.shape,
                     num_unmask=num_unmask,
-                    select_from_mask=masked_mutable,
+                    select_from_mask=eligible,
                     selection_score=None,
                     selection_mode="sample",
                 )
             else:
                 unmask = self.compute_confidence_unmask(
-                    logits, masked_mutable, done=step_results["done"]
+                    logits,
+                    masked_mutable,
+                    done=step_results["done"],
+                    fixed=fixed,
                 )
         else:
             unmask = masked_mutable
@@ -339,7 +402,6 @@ class RelayConfidencePredictor(torch.nn.Module, Predictor):
 
         final_x = step_results["x"]
         text = self.decode(final_x)
-        rollout_steps = step_results["steps_taken"].float().mean().item()
         _time_taken = time.time() - _start_time
 
         rollout_diagnostics: Dict[str, Any] = {}
@@ -366,7 +428,11 @@ class RelayConfidencePredictor(torch.nn.Module, Predictor):
             "loss": None,
             "time_taken": [_time_taken] * len(text),
             "output_start_idx": output_start_idx,
-            "rollout_steps": rollout_steps,
+            "rollout_steps": step_results["steps_taken"]
+            .detach()
+            .float()
+            .cpu()
+            .tolist(),
             "rollout_diagnostics": rollout_diagnostics,
         }
         if self.log_rollout_diagnostics:

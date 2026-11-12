@@ -10,9 +10,11 @@ from .datamodule import MLMSeq2SeqTrainMaskAllCollator
 from .harness import RelayDiagnosticsHarness
 from .loss import RelayBPTTSeq2SeqLoss
 from .model import RotaryTransformerRelayMLMModel
+from .cum_top_prob_mlm_predictor import CumTopProbMLMPredictor
 from .predictor import RelayConfidencePredictor
 
 __all__ = [
+    "CumTopProbMLMPredictor",
     "MLMSeq2SeqTrainMaskAllCollator",
     "RelayDiagnosticsHarness",
     "RelayBPTTSeq2SeqLoss",

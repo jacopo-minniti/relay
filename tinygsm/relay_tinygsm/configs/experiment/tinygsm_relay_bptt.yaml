@@ -47,6 +47,7 @@ predictor:
   confidence: top_prob
   threshold: 0.15
   with_relay: true
+  allow_block_size: null
   log_rollout_diagnostics: false
 
 log_predictions:

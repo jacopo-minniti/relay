@@ -4,6 +4,7 @@ import torch
 
 from xlm.datamodule import Tokenizer
 from xlm.harness import Harness, LossFunction
+from relay_tinygsm.predictor import contiguous_block_allow
 from xlm.utils.nn import masked_mean, select_random_indices
 from xlm.utils.rank_zero import RankedLogger
 
@@ -131,6 +132,7 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
         logits: torch.Tensor,
         masked_mutable: torch.Tensor,
         confidence_threshold: Optional[torch.Tensor] = None,
+        fixed: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         with torch.no_grad():
             if self.use_model_confidence:
@@ -138,12 +140,24 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
                     logits,
                     masked_mutable,
                     threshold=confidence_threshold,
+                    fixed=fixed,
                 )
-            num_unmask = (masked_mutable.sum(dim=-1) // 2).clamp(min=1)
+            eligible = masked_mutable
+            block = getattr(self.predictor, "allow_block_size", None)
+            if block:
+                if fixed is None:
+                    raise ValueError(
+                        "allow_block_size requires fixed so the suffix start "
+                        "is known."
+                    )
+                eligible = masked_mutable & contiguous_block_allow(
+                    masked_mutable, fixed, int(block)
+                )
+            num_unmask = (eligible.sum(dim=-1) // 2).clamp(min=1)
             return select_random_indices(
                 inp_shape=logits.shape[:2],
                 num_unmask=num_unmask,
-                select_from_mask=masked_mutable,
+                select_from_mask=eligible,
                 selection_score=None,
                 selection_mode="sample",
             )
@@ -452,6 +466,7 @@ class RelayBPTTSeq2SeqLoss(LossFunction):
                 logits.detach(),
                 masked_mutable,
                 confidence_threshold=threshold_t,
+                fixed=fixed,
             )
             unmask = unmask & masked_mutable
             last_unmask = unmask

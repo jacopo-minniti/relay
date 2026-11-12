@@ -77,3 +77,19 @@ Final test metrics are `code_exec_accuracy=1.0` with rollout steps well under 25
 | relay | 66850546 | superpod-a100 | A100-SXM4-80GB (`gpu020`) | `logs/tinygsm_relay_overfit_debug-66850546.out` | 0.028 | 8 |
 | relay_sg | 66850856 | gpu-preempt-highvram | H100 80GB (`uri-gpu012`) | `logs/tinygsm_relay_overfit_debug-66850856.out` | 0.054 | 7 |
 | rollout | 66850857 | superpod-a100 | A100-SXM4-80GB | `logs/tinygsm_relay_overfit_debug-66850857.out` | 0.021 | 5 |
+
+### Warm start from tinygsm_mlm_v2 step 400k
+
+EMA model-only file, written by job `66856430` on `gpu017`:
+
+`/scratch3/workspace/dhruveshpate_umass_edu-relay/relay-tinygsm/checkpoints/tinygsm_mlm_v2/0-400000.pth`
+
+The three full-size debug overfits below load that file with `model_only_checkpoint_path`.
+All finished `COMPLETED` on 2026-11-06.
+Test `code_exec_accuracy=1.0` and `rollout_steps=2`.
+
+| Rung | Job | Partition | GPU | Log | Final loss | NFE |
+|---|---|---|---|---|---|---|
+| relay | 66856776 | superpod-a100 | A100-SXM4-80GB (`gpu021`) | `logs/tinygsm_relay_overfit_mlm400k-66856776.out` | 2.6e-5 | 2 |
+| relay_sg | 66856777 | superpod-a100 | A100-SXM4-80GB (`gpu021`) | `logs/tinygsm_relay_overfit_mlm400k-66856777.out` | 3.1e-5 | 2 |
+| rollout | 66856778 | superpod-a100 | A100-SXM4-80GB (`gpu017`) | `logs/tinygsm_relay_overfit_mlm400k-66856778.out` | 1.0e-4 | 2 |

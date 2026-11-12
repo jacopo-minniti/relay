@@ -26,6 +26,7 @@ predictor:
   confidence: top_prob
   threshold: 0.15
   with_relay: true
+  allow_block_size: null
 
 diagnostic_metrics: null
 reported_metrics:
